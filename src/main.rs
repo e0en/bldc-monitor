@@ -1,9 +1,20 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread;
+use std::time::Duration;
 
 use eframe::egui;
 
 fn main() -> eframe::Result {
     env_logger::init();
+
+    let (command_sender, command_receiver) = channel::<MotorCommand>();
+    let (status_sender, status_receiver) = channel::<MotorStatus>();
+
+    thread::spawn(|| {
+        communicate(status_sender, command_receiver);
+    });
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 768.0]),
         ..Default::default()
@@ -11,11 +22,34 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "BLDC monitor",
         options,
-        Box::new(|_| Ok(Box::<MyApp>::default())),
+        Box::new(|_| {
+            Ok(Box::<MyApp>::new(MyApp::new(
+                command_sender,
+                status_receiver,
+            )))
+        }),
     )
 }
 
+struct MotorStatus {
+    timestamp: f32,
+    angle: f32,
+    velocity: f32,
+    torque: f32,
+}
+
+fn communicate(status_send: Sender<MotorStatus>, command_recv: Receiver<MotorCommand>) {
+    loop {
+        if let Ok(x) = command_recv.recv_timeout(Duration::from_millis(10)) {
+            send_command(x);
+        }
+    }
+}
+
 struct MyApp {
+    command_send: Sender<MotorCommand>,
+    status_recv: Receiver<MotorStatus>,
+
     angle_string: String,
     velocity_string: String,
     torque_string: String,
@@ -44,13 +78,16 @@ fn send_command(c: MotorCommand) {
     }
 }
 
-impl Default for MyApp {
-    fn default() -> Self {
+impl MyApp {
+    fn new(command_send: Sender<MotorCommand>, status_recv: Receiver<MotorStatus>) -> Self {
         let position = 0.0;
         let velocity = 0.0;
         let torque = 0.0;
 
         Self {
+            command_send,
+            status_recv,
+
             angle_string: position.to_string(),
             velocity_string: velocity.to_string(),
             torque_string: torque.to_string(),
@@ -87,7 +124,7 @@ impl eframe::App for MyApp {
                     .add_enabled(is_button_active, egui::Button::new("Set"))
                     .clicked()
                 {
-                    send_command(MotorCommand::Angle(self.angle));
+                    let _ = self.command_send.send(MotorCommand::Angle(self.angle));
                 };
             });
 
@@ -111,7 +148,9 @@ impl eframe::App for MyApp {
                     .add_enabled(is_button_active, egui::Button::new("Set"))
                     .clicked()
                 {
-                    send_command(MotorCommand::Velocity(self.velocity));
+                    let _ = self
+                        .command_send
+                        .send(MotorCommand::Velocity(self.velocity));
                 };
             });
 
@@ -135,15 +174,15 @@ impl eframe::App for MyApp {
                     .add_enabled(is_button_active, egui::Button::new("Set"))
                     .clicked()
                 {
-                    send_command(MotorCommand::Torque(self.torque));
+                    let _ = self.command_send.send(MotorCommand::Torque(self.torque));
                 };
             });
 
             if ui.button("disable").clicked() {
-                send_command(MotorCommand::Disable);
+                let _ = self.command_send.send(MotorCommand::Disable);
             }
             if ui.button("enable").clicked() {
-                send_command(MotorCommand::Enable);
+                let _ = self.command_send.send(MotorCommand::Enable);
             }
         });
     }
