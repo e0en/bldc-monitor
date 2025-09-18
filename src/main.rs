@@ -39,25 +39,26 @@ struct MotorStatus {
 }
 
 fn communicate(status_send: Sender<MotorStatus>, command_recv: Receiver<MotorCommand>) {
+    let t0 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     loop {
-        if let Ok(x) = command_recv.recv_timeout(Duration::from_millis(10)) {
-            send_command(x);
+        for c in command_recv.try_iter() {
+            send_command(c);
         }
-        for _ in 0..10 {
-            if let Ok(t) = SystemTime::now().duration_since(UNIX_EPOCH) {
-                let timestamp = (t.as_micros() as f64 / 1_000_000.0) as f32;
+        if let Ok(t) = SystemTime::now().duration_since(UNIX_EPOCH) {
+            let dt = t - t0;
+            let timestamp = (dt.as_micros() as f32) / 1_000_000.0;
 
-                let angle = f32::sin(timestamp);
-                let velocity = f32::cos(timestamp);
-                let torque = f32::cos(2.0 * timestamp);
+            let angle = f32::sin(timestamp * 500.0);
+            let velocity = f32::cos(timestamp * 251.0);
+            let torque = f32::cos(2.0 * timestamp * 101.0);
 
-                let _ = status_send.send(MotorStatus {
-                    timestamp,
-                    angle,
-                    velocity,
-                    torque,
-                });
-            }
+            let _ = status_send.send(MotorStatus {
+                timestamp,
+                angle,
+                velocity,
+                torque,
+            });
+            std::thread::sleep(Duration::from_millis(1));
         }
     }
 }
@@ -242,13 +243,9 @@ impl eframe::App for MyApp {
                     .style(egui_plot::LineStyle::Solid)
                     .color(egui::Color32::RED)
                     .width(2.0);
-
-                let mins = [0.0, -1.0];
-                let maxs = [1.0, 1.0];
-                let bounds = egui_plot::PlotBounds::from_min_max(mins, maxs);
-                plot_ui.set_plot_bounds(bounds);
                 plot_ui.line(line);
             });
+            ctx.request_repaint();
         });
     }
 }
