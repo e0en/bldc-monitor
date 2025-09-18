@@ -106,17 +106,14 @@ impl eframe::App for MyApp {
             ui.heading("BLDC Monitor");
             ui.horizontal(|ui| {
                 let name_label = ui.label("Angle");
-                let value_edit = ui
-                    .text_edit_singleline(&mut self.angle_string)
+                ui.text_edit_singleline(&mut self.angle_string)
                     .labelled_by(name_label.id);
 
                 let mut is_button_active = true;
-                if value_edit.changed() {
-                    match self.angle_string.parse::<f32>() {
-                        Ok(n) => self.angle = n,
-                        _ => {
-                            is_button_active = false;
-                        }
+                match self.angle_string.parse::<f32>() {
+                    Ok(n) => self.angle = n,
+                    _ => {
+                        is_button_active = false;
                     }
                 }
 
@@ -130,17 +127,14 @@ impl eframe::App for MyApp {
 
             ui.horizontal(|ui| {
                 let name_label = ui.label("Velocity");
-                let value_edit = ui
-                    .text_edit_singleline(&mut self.velocity_string)
+                ui.text_edit_singleline(&mut self.velocity_string)
                     .labelled_by(name_label.id);
 
                 let mut is_button_active = true;
-                if value_edit.changed() {
-                    match self.velocity_string.parse::<f32>() {
-                        Ok(n) => self.velocity = n,
-                        _ => {
-                            is_button_active = false;
-                        }
+                match self.velocity_string.parse::<f32>() {
+                    Ok(n) => self.velocity = n,
+                    _ => {
+                        is_button_active = false;
                     }
                 }
 
@@ -156,17 +150,14 @@ impl eframe::App for MyApp {
 
             ui.horizontal(|ui| {
                 let name_label = ui.label("Torque");
-                let value_edit = ui
-                    .text_edit_singleline(&mut self.torque_string)
+                ui.text_edit_singleline(&mut self.torque_string)
                     .labelled_by(name_label.id);
 
                 let mut is_button_active = true;
-                if value_edit.changed() {
-                    match self.torque_string.parse::<f32>() {
-                        Ok(n) => self.torque = n,
-                        _ => {
-                            is_button_active = false;
-                        }
+                match self.torque_string.parse::<f32>() {
+                    Ok(n) => self.torque = n,
+                    _ => {
+                        is_button_active = false;
                     }
                 }
 
