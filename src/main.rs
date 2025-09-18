@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 
@@ -43,6 +43,22 @@ fn communicate(status_send: Sender<MotorStatus>, command_recv: Receiver<MotorCom
         if let Ok(x) = command_recv.recv_timeout(Duration::from_millis(10)) {
             send_command(x);
         }
+        for _ in 0..10 {
+            if let Ok(t) = SystemTime::now().duration_since(UNIX_EPOCH) {
+                let timestamp = (t.as_micros() as f64 / 1_000_000.0) as f32;
+
+                let angle = f32::sin(timestamp);
+                let velocity = f32::cos(timestamp);
+                let torque = f32::cos(2.0 * timestamp);
+
+                let _ = status_send.send(MotorStatus {
+                    timestamp,
+                    angle,
+                    velocity,
+                    torque,
+                });
+            }
+        }
     }
 }
 
@@ -59,7 +75,7 @@ struct MyApp {
     torque: f32,
 
     plot_type: PlotType,
-    plot_data: Vec<(f32, f32)>,
+    plot_points: Vec<egui_plot::PlotPoint>,
     is_plotting: bool,
 }
 
@@ -108,7 +124,7 @@ impl MyApp {
             torque,
 
             plot_type: PlotType::Angle,
-            plot_data: vec![],
+            plot_points: vec![],
             is_plotting: false,
         }
     }
@@ -123,7 +139,8 @@ impl eframe::App for MyApp {
                     PlotType::Velocity => s.velocity,
                     PlotType::Torque => s.torque,
                 };
-                self.plot_data.push((s.timestamp, value));
+                let new_point = egui_plot::PlotPoint::new(s.timestamp as f64, value as f64);
+                self.plot_points.push(new_point);
             }
         }
         ctx.set_pixels_per_point(1.5);
@@ -209,8 +226,29 @@ impl eframe::App for MyApp {
                 ui.selectable_value(&mut self.plot_type, PlotType::Torque, "Torque");
             });
             if before != self.plot_type {
-                self.plot_data.clear();
+                self.plot_points.clear();
             }
+            if ui.button("Plot").clicked() {
+                if !self.is_plotting {
+                    self.plot_points.clear();
+                }
+                self.is_plotting = !self.is_plotting;
+            }
+
+            egui_plot::Plot::new("plot").show(ui, |plot_ui| {
+                let points = egui_plot::PlotPoints::Borrowed(&self.plot_points);
+                let line = egui_plot::Line::new("Sine", points)
+                    .name("Sine")
+                    .style(egui_plot::LineStyle::Solid)
+                    .color(egui::Color32::RED)
+                    .width(2.0);
+
+                let mins = [0.0, -1.0];
+                let maxs = [1.0, 1.0];
+                let bounds = egui_plot::PlotBounds::from_min_max(mins, maxs);
+                plot_ui.set_plot_bounds(bounds);
+                plot_ui.line(line);
+            });
         });
     }
 }
