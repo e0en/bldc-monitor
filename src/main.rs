@@ -57,6 +57,10 @@ struct MyApp {
     angle: f32,
     velocity: f32,
     torque: f32,
+
+    plot_type: PlotType,
+    plot_data: Vec<(f32, f32)>,
+    is_plotting: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -66,6 +70,13 @@ enum MotorCommand {
     Torque(f32),
     Enable,
     Disable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlotType {
+    Angle,
+    Velocity,
+    Torque,
 }
 
 fn send_command(c: MotorCommand) {
@@ -95,12 +106,26 @@ impl MyApp {
             angle: position,
             velocity,
             torque,
+
+            plot_type: PlotType::Angle,
+            plot_data: vec![],
+            is_plotting: false,
         }
     }
 }
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        for s in self.status_recv.try_iter() {
+            if self.is_plotting {
+                let value = match self.plot_type {
+                    PlotType::Angle => s.angle,
+                    PlotType::Velocity => s.velocity,
+                    PlotType::Torque => s.torque,
+                };
+                self.plot_data.push((s.timestamp, value));
+            }
+        }
         ctx.set_pixels_per_point(1.5);
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("BLDC Monitor");
@@ -174,6 +199,17 @@ impl eframe::App for MyApp {
             }
             if ui.button("enable").clicked() {
                 let _ = self.command_send.send(MotorCommand::Enable);
+            }
+
+            let before = self.plot_type;
+            ui.label("Plot Type");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.plot_type, PlotType::Angle, "Angle");
+                ui.selectable_value(&mut self.plot_type, PlotType::Velocity, "Velocity");
+                ui.selectable_value(&mut self.plot_type, PlotType::Torque, "Torque");
+            });
+            if before != self.plot_type {
+                self.plot_data.clear();
             }
         });
     }
