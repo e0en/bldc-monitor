@@ -1,9 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
+use rumqttc::{Client, Event, QoS};
+use serde::{Deserialize, Serialize};
 
 fn main() -> eframe::Result {
     env_logger::init();
@@ -11,8 +12,15 @@ fn main() -> eframe::Result {
     let (command_sender, command_receiver) = channel::<MotorCommand>();
     let (status_sender, status_receiver) = channel::<MotorStatus>();
 
+    let options = rumqttc::MqttOptions::new("gui", "127.0.0.1", 1883);
+    let (client, connection) = Client::new(options, 10);
+    client.subscribe("bldc/status", QoS::ExactlyOnce).unwrap();
+
     thread::spawn(|| {
-        communicate(status_sender, command_receiver);
+        forward_status(status_sender, connection);
+    });
+    thread::spawn(|| {
+        forward_command(command_receiver, client);
     });
 
     let options = eframe::NativeOptions {
@@ -31,34 +39,36 @@ fn main() -> eframe::Result {
     )
 }
 
+#[derive(Deserialize, Debug)]
 struct MotorStatus {
-    timestamp: f32,
+    timestamp: f64,
     angle: f32,
     velocity: f32,
     torque: f32,
 }
 
-fn communicate(status_send: Sender<MotorStatus>, command_recv: Receiver<MotorCommand>) {
-    let t0 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+fn forward_command(command_recv: Receiver<MotorCommand>, client: rumqttc::Client) {
     loop {
         for c in command_recv.try_iter() {
-            send_command(c);
+            let cs = MotorCommandStruct::from(c);
+            if let Ok(j) = serde_json::to_string(&cs) {
+                client
+                    .publish("bldc/command", QoS::AtMostOnce, false, j)
+                    .unwrap();
+            }
         }
-        if let Ok(t) = SystemTime::now().duration_since(UNIX_EPOCH) {
-            let dt = t - t0;
-            let timestamp = (dt.as_micros() as f32) / 1_000_000.0;
+    }
+}
 
-            let angle = f32::sin(timestamp * 500.0);
-            let velocity = f32::cos(timestamp * 251.0);
-            let torque = f32::cos(2.0 * timestamp * 101.0);
-
-            let _ = status_send.send(MotorStatus {
-                timestamp,
-                angle,
-                velocity,
-                torque,
-            });
-            std::thread::sleep(Duration::from_millis(1));
+fn forward_status(status_send: Sender<MotorStatus>, mut mqtt_connection: rumqttc::Connection) {
+    loop {
+        for m in mqtt_connection.iter() {
+            if let Ok(Event::Incoming(rumqttc::Packet::Publish(p))) = m
+                && p.topic == "bldc/status"
+                && let Ok(status) = serde_json::from_slice::<MotorStatus>(&p.payload)
+            {
+                let _ = status_send.send(status);
+            }
         }
     }
 }
@@ -75,18 +85,88 @@ struct MyApp {
     velocity: f32,
     torque: f32,
 
+    run_mode: RunMode,
+
     plot_type: PlotType,
     plot_points: Vec<egui_plot::PlotPoint>,
     is_plotting: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, Serialize)]
+struct MotorCommandStruct {
+    command_type: MotorCommandType,
+    value: Option<f32>,
+    flag: Option<u8>,
+}
+
+impl From<MotorCommand> for MotorCommandStruct {
+    fn from(value: MotorCommand) -> Self {
+        match value {
+            MotorCommand::Angle(a) => Self {
+                command_type: MotorCommandType::Angle,
+                value: Some(a),
+                flag: None,
+            },
+            MotorCommand::Velocity(v) => Self {
+                command_type: MotorCommandType::Velocity,
+                value: Some(v),
+                flag: None,
+            },
+            MotorCommand::Torque(t) => Self {
+                command_type: MotorCommandType::Torque,
+                value: Some(t),
+                flag: None,
+            },
+            MotorCommand::Enable => Self {
+                command_type: MotorCommandType::Enable,
+                value: None,
+                flag: None,
+            },
+            MotorCommand::Disable => Self {
+                command_type: MotorCommandType::Disable,
+                value: None,
+                flag: None,
+            },
+            MotorCommand::SetMode(m) => Self {
+                command_type: MotorCommandType::Mode,
+                value: None,
+                flag: Some(match m {
+                    RunMode::Impedance => 0x00,
+                    RunMode::Angle => 0x01,
+                    RunMode::Velocity => 0x02,
+                    RunMode::Torque => 0x03,
+                }),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+enum MotorCommandType {
+    Angle,
+    Velocity,
+    Torque,
+    Enable,
+    Disable,
+    Mode,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
 enum MotorCommand {
     Angle(f32),
     Velocity(f32),
     Torque(f32),
+    SetMode(RunMode),
     Enable,
     Disable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+enum RunMode {
+    Angle,
+    Velocity,
+    Torque,
+    Impedance,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -94,16 +174,6 @@ enum PlotType {
     Angle,
     Velocity,
     Torque,
-}
-
-fn send_command(c: MotorCommand) {
-    match c {
-        MotorCommand::Angle(n) => println!("Angle {}", n),
-        MotorCommand::Velocity(n) => println!("Velocity {}", n),
-        MotorCommand::Torque(n) => println!("Torque {}", n),
-        MotorCommand::Enable => println!("Enable"),
-        MotorCommand::Disable => println!("Disable"),
-    }
 }
 
 impl MyApp {
@@ -125,6 +195,7 @@ impl MyApp {
             torque,
 
             plot_type: PlotType::Angle,
+            run_mode: RunMode::Impedance,
             plot_points: vec![],
             is_plotting: false,
         }
@@ -140,7 +211,7 @@ impl eframe::App for MyApp {
                     PlotType::Velocity => s.velocity,
                     PlotType::Torque => s.torque,
                 };
-                let new_point = egui_plot::PlotPoint::new(s.timestamp as f64, value as f64);
+                let new_point = egui_plot::PlotPoint::new(s.timestamp, value as f64);
                 self.plot_points.push(new_point);
             }
         }
@@ -217,6 +288,17 @@ impl eframe::App for MyApp {
             }
             if ui.button("enable").clicked() {
                 let _ = self.command_send.send(MotorCommand::Enable);
+            }
+
+            ui.label("Run mode");
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.run_mode, RunMode::Impedance, "Impedance");
+                ui.selectable_value(&mut self.run_mode, RunMode::Angle, "Angle");
+                ui.selectable_value(&mut self.run_mode, RunMode::Velocity, "Velocity");
+                ui.selectable_value(&mut self.run_mode, RunMode::Torque, "Torque");
+            });
+            if ui.button("Set Mode").clicked() {
+                let _ = self.command_send.send(MotorCommand::SetMode(self.run_mode));
             }
 
             let before = self.plot_type;
