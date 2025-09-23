@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use std::fs::File;
+use std::io::prelude::Write;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::thread;
+use std::{f32, thread};
 
 use eframe::egui;
 use rumqttc::{Client, Event, QoS};
@@ -90,6 +92,8 @@ struct MyApp {
     plot_type: PlotType,
     plot_points: Vec<egui_plot::PlotPoint>,
     is_plotting: bool,
+
+    file_dialog: egui_file_dialog::FileDialog,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -198,6 +202,8 @@ impl MyApp {
             run_mode: RunMode::Impedance,
             plot_points: vec![],
             is_plotting: false,
+
+            file_dialog: egui_file_dialog::FileDialog::new(),
         }
     }
 }
@@ -218,78 +224,8 @@ impl eframe::App for MyApp {
         ctx.set_pixels_per_point(1.5);
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("BLDC Monitor");
-            ui.horizontal(|ui| {
-                let name_label = ui.label("Angle");
-                ui.text_edit_singleline(&mut self.angle_string)
-                    .labelled_by(name_label.id);
 
-                let mut is_button_active = true;
-                match self.angle_string.parse::<f32>() {
-                    Ok(n) => self.angle = n,
-                    _ => {
-                        is_button_active = false;
-                    }
-                }
-
-                if ui
-                    .add_enabled(is_button_active, egui::Button::new("Set"))
-                    .clicked()
-                {
-                    let _ = self.command_send.send(MotorCommand::Angle(self.angle));
-                };
-            });
-
-            ui.horizontal(|ui| {
-                let name_label = ui.label("Velocity");
-                ui.text_edit_singleline(&mut self.velocity_string)
-                    .labelled_by(name_label.id);
-
-                let mut is_button_active = true;
-                match self.velocity_string.parse::<f32>() {
-                    Ok(n) => self.velocity = n,
-                    _ => {
-                        is_button_active = false;
-                    }
-                }
-
-                if ui
-                    .add_enabled(is_button_active, egui::Button::new("Set"))
-                    .clicked()
-                {
-                    let _ = self
-                        .command_send
-                        .send(MotorCommand::Velocity(self.velocity));
-                };
-            });
-
-            ui.horizontal(|ui| {
-                let name_label = ui.label("Torque");
-                ui.text_edit_singleline(&mut self.torque_string)
-                    .labelled_by(name_label.id);
-
-                let mut is_button_active = true;
-                match self.torque_string.parse::<f32>() {
-                    Ok(n) => self.torque = n,
-                    _ => {
-                        is_button_active = false;
-                    }
-                }
-
-                if ui
-                    .add_enabled(is_button_active, egui::Button::new("Set"))
-                    .clicked()
-                {
-                    let _ = self.command_send.send(MotorCommand::Torque(self.torque));
-                };
-            });
-
-            if ui.button("disable").clicked() {
-                let _ = self.command_send.send(MotorCommand::Disable);
-            }
-            if ui.button("enable").clicked() {
-                let _ = self.command_send.send(MotorCommand::Enable);
-            }
-
+            let old_mode = self.run_mode;
             ui.label("Run mode");
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.run_mode, RunMode::Impedance, "Impedance");
@@ -297,8 +233,84 @@ impl eframe::App for MyApp {
                 ui.selectable_value(&mut self.run_mode, RunMode::Velocity, "Velocity");
                 ui.selectable_value(&mut self.run_mode, RunMode::Torque, "Torque");
             });
-            if ui.button("Set Mode").clicked() {
+            if old_mode != self.run_mode {
                 let _ = self.command_send.send(MotorCommand::SetMode(self.run_mode));
+            }
+
+            egui::Grid::new("params")
+                .num_columns(3)
+                .spacing([40.0, 4.0])
+                .show(ui, |ui| {
+                    let name_label = ui.label("Angle");
+                    ui.text_edit_singleline(&mut self.angle_string)
+                        .labelled_by(name_label.id);
+
+                    let mut is_button_active = true;
+                    match self.angle_string.parse::<f32>() {
+                        Ok(n) => self.angle = n,
+                        _ => {
+                            is_button_active = false;
+                        }
+                    }
+
+                    if ui
+                        .add_enabled(is_button_active, egui::Button::new("Set"))
+                        .clicked()
+                    {
+                        let _ = self.command_send.send(MotorCommand::Angle(self.angle));
+                    };
+
+                    ui.end_row();
+
+                    let name_label = ui.label("Velocity");
+                    ui.text_edit_singleline(&mut self.velocity_string)
+                        .labelled_by(name_label.id);
+
+                    let mut is_button_active = true;
+                    match self.velocity_string.parse::<f32>() {
+                        Ok(n) => self.velocity = n,
+                        _ => {
+                            is_button_active = false;
+                        }
+                    }
+
+                    if ui
+                        .add_enabled(is_button_active, egui::Button::new("Set"))
+                        .clicked()
+                    {
+                        let _ = self
+                            .command_send
+                            .send(MotorCommand::Velocity(self.velocity));
+                    };
+                    ui.end_row();
+
+                    let name_label = ui.label("Torque");
+                    ui.text_edit_singleline(&mut self.torque_string)
+                        .labelled_by(name_label.id);
+
+                    let mut is_button_active = true;
+                    match self.torque_string.parse::<f32>() {
+                        Ok(n) => self.torque = n,
+                        _ => {
+                            is_button_active = false;
+                        }
+                    }
+
+                    if ui
+                        .add_enabled(is_button_active, egui::Button::new("Set"))
+                        .clicked()
+                    {
+                        let _ = self.command_send.send(MotorCommand::Torque(self.torque));
+                    };
+
+                    ui.end_row();
+                });
+
+            if ui.button("disable").clicked() {
+                let _ = self.command_send.send(MotorCommand::Disable);
+            }
+            if ui.button("enable").clicked() {
+                let _ = self.command_send.send(MotorCommand::Enable);
             }
 
             let before = self.plot_type;
@@ -316,6 +328,26 @@ impl eframe::App for MyApp {
                     self.plot_points.clear();
                 }
                 self.is_plotting = !self.is_plotting;
+            }
+
+            let export_txt = format!("Export {} samples", self.plot_points.len());
+            if ui
+                .add_enabled(
+                    !self.plot_points.is_empty(),
+                    egui::Button::new(export_txt.as_str()),
+                )
+                .clicked()
+            {
+                self.file_dialog.save_file();
+            }
+
+            if let Some(path) = self.file_dialog.update(ctx).picked()
+                && let Ok(mut file) = File::open(path)
+            {
+                for p in &self.plot_points {
+                    let line = format!("{},{}\n", p.x, p.y);
+                    let _ = file.write_all(line.as_bytes());
+                }
             }
 
             egui_plot::Plot::new("plot").show(ui, |plot_ui| {
